@@ -1,6 +1,16 @@
 /// <reference types="vite/client" />
 
-import type { MatchReference, OverlayExportOptions, OverlayExportResult, OverlayPreview, OverlayTheme, SessionMatch, ShooterResolution, UserProfile } from '../electron/types'
+import type {
+  MatchReference,
+  OverlayExportOptions,
+  OverlayExportResult,
+  OverlayPreview,
+  OverlayTheme,
+  OverlayViewSelection,
+  SessionMatch,
+  ShooterResolution,
+  UserProfile
+} from '../electron/types'
 
 interface ElectronAPI {
   openPractiScoreLogin: () => Promise<boolean>
@@ -10,7 +20,8 @@ interface ElectronAPI {
   importFromResultsUrl: (url: string) => Promise<SessionMatch>
   scrapeDetails: (matchRef: MatchReference) => Promise<SessionMatch>
   resolveShooter: (sessionId: string, preferredName: string) => Promise<ShooterResolution>
-  previewOverlay: (sessionId: string, shooterId: string, stageId: string, layout: string, theme: OverlayTheme) => Promise<OverlayPreview>
+  pickExportFolder: (defaultPath?: string) => Promise<string | null>
+  previewOverlay: (sessionId: string, shooterId: string, selection: OverlayViewSelection, layout: string, theme: OverlayTheme) => Promise<OverlayPreview>
   exportOverlays: (sessionId: string, shooterId: string, options: OverlayExportOptions) => Promise<OverlayExportResult>
   openPath: (targetPath: string) => Promise<string>
 }

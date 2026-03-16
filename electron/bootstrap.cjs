@@ -1,31 +1,25 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { app, BrowserWindow } from 'electron'
-import { getSessionMatch } from './sessionStore'
-import type {
-  OverlayExportOptions,
-  OverlayExportResult,
-  OverlayLayout,
-  OverlayPreview,
-  OverlayTheme,
-  OverlayViewSelection,
-  ScrapedMatch,
-  ScrapedMatchResult,
-  ScrapedShooter,
-  ScrapedStage,
-  ScrapedStageResult
-} from './types'
+const fs = require('node:fs')
+const path = require('node:path')
+const crypto = require('node:crypto')
+const { pathToFileURL } = require('node:url')
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
 
-type ThemeConfig = {
-  bgStart: string
-  bgEnd: string
-  accent: string
-  panel: string
-  text: string
-  muted: string
+process.env.APP_ROOT = path.join(__dirname, '..')
+app.disableHardwareAcceleration()
+
+const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
+const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
+
+process.env.VITE_PUBLIC = RENDERER_DIST
+
+const defaultProfile = {
+  preferredShooterName: '',
+  preferredTheme: 'carbon',
+  preferredLayout: 'horizontal',
+  preferredExportFolder: ''
 }
 
-const themes: Record<OverlayTheme, ThemeConfig> = {
+const themes = {
   carbon: {
     bgStart: '#09111c',
     bgEnd: '#14273d',
@@ -44,43 +38,12 @@ const themes: Record<OverlayTheme, ThemeConfig> = {
   }
 }
 
-const dimensionsByLayout: Record<OverlayLayout, { width: number; height: number }> = {
+const dimensionsByLayout = {
   horizontal: { width: 1800, height: 540 },
   vertical: { width: 1080, height: 1400 }
 }
 
-type OverlayContent = {
-  modeLabel: string
-  title: string
-  shooterName: string
-  divisionLabel: string
-  primaryLabel: string
-  primaryValue: string
-  secondaryLabel: string
-  secondaryValue: string
-  stats: Record<string, string>
-}
-
-type TitleFrame = {
-  x: number
-  y: number
-  width: number
-  height: number
-  maxFontSize: number
-  minFontSize: number
-  textAnchor: 'start' | 'middle'
-}
-
-type LayoutFrame = {
-  title: TitleFrame
-  modeLabelY: number
-  shooterY: number
-  divisionY: number
-  summaryTranslateX: number
-  summaryTranslateY: number
-}
-
-const framesByLayout: Record<OverlayLayout, LayoutFrame> = {
+const framesByLayout = {
   horizontal: {
     title: {
       x: 90,
@@ -115,7 +78,131 @@ const framesByLayout: Record<OverlayLayout, LayoutFrame> = {
   }
 }
 
-export async function createPreview(sessionId: string, shooterId: string, selection: OverlayViewSelection, layout: OverlayLayout, theme: OverlayTheme): Promise<OverlayPreview> {
+const sessionMatches = new Map()
+let win = null
+
+function getPreferencesPath() {
+  return path.join(app.getPath('userData'), 'preferences.json')
+}
+
+async function getUserProfile() {
+  const filePath = getPreferencesPath()
+  if (!fs.existsSync(filePath)) {
+    return defaultProfile
+  }
+
+  try {
+    const raw = await fs.promises.readFile(filePath, 'utf8')
+    return { ...defaultProfile, ...JSON.parse(raw) }
+  } catch {
+    return defaultProfile
+  }
+}
+
+async function saveUserProfile(profile) {
+  const nextProfile = { ...(await getUserProfile()), ...profile }
+  const filePath = getPreferencesPath()
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true })
+  await fs.promises.writeFile(filePath, JSON.stringify(nextProfile, null, 2), 'utf8')
+  return nextProfile
+}
+
+function putSessionMatch(match) {
+  const sessionId = crypto.randomUUID()
+  const sessionMatch = { sessionId, match }
+  sessionMatches.set(sessionId, sessionMatch)
+  return sessionMatch
+}
+
+function getSessionMatch(sessionId) {
+  return sessionMatches.get(sessionId) ?? null
+}
+
+function clearSessions() {
+  sessionMatches.clear()
+}
+
+function loadBuiltModule(prefix) {
+  const fileName = fs.readdirSync(MAIN_DIST)
+    .filter((entry) => entry.startsWith(`${prefix}-`) && entry.endsWith('.js'))
+    .map((entry) => ({
+      entry,
+      modifiedAt: fs.statSync(path.join(MAIN_DIST, entry)).mtimeMs
+    }))
+    .sort((left, right) => right.modifiedAt - left.modifiedAt)[0]?.entry
+
+  if (!fileName) {
+    throw new Error(`Built module not found for prefix: ${prefix}`)
+  }
+
+  return import(pathToFileURL(path.join(MAIN_DIST, fileName)).href)
+}
+
+function slugify(value) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+}
+
+function normalizeName(value) {
+  return cleanShooterName(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function cleanShooterName(value) {
+  return String(value || '')
+    .replace(/^\s*\d+\s*[-.)]\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function resolveShooter(match, preferredName) {
+  const normalizedPreferred = normalizeName(preferredName)
+  if (!normalizedPreferred) {
+    return { shooterId: null, confidence: 'none', candidates: match.shooters }
+  }
+
+  const exact = match.shooters.find((shooter) => normalizeName(shooter.name) === normalizedPreferred)
+  if (exact) {
+    return { shooterId: exact.id, confidence: 'exact', candidates: [exact] }
+  }
+
+  const preferredTokens = tokenizeName(preferredName)
+  const reorderedExactMatches = match.shooters.filter((shooter) => sameNameParts(shooter.name, preferredName))
+  if (reorderedExactMatches.length === 1) {
+    return { shooterId: reorderedExactMatches[0].id, confidence: 'exact', candidates: reorderedExactMatches }
+  }
+  if (reorderedExactMatches.length > 1) {
+    return { shooterId: null, confidence: 'none', candidates: reorderedExactMatches }
+  }
+
+  const partials = match.shooters.filter((shooter) => matchesNameParts(shooter.name, preferredTokens) || normalizeName(shooter.name).includes(normalizedPreferred))
+  if (partials.length === 1) {
+    return { shooterId: partials[0].id, confidence: 'partial', candidates: partials }
+  }
+
+  return { shooterId: null, confidence: 'none', candidates: partials.length > 0 ? partials : match.shooters }
+}
+
+function tokenizeName(value) {
+  return normalizeName(value)
+    .split(' ')
+    .filter(Boolean)
+}
+
+function sameNameParts(left, right) {
+  const leftTokens = tokenizeName(left).sort()
+  const rightTokens = tokenizeName(right).sort()
+  return leftTokens.length > 0 && leftTokens.length === rightTokens.length && leftTokens.every((token, index) => token === rightTokens[index])
+}
+
+function matchesNameParts(candidateName, preferredTokens) {
+  if (preferredTokens.length === 0) return false
+  const candidateTokens = tokenizeName(candidateName)
+  return preferredTokens.every((preferredToken) => candidateTokens.some((candidateToken) => candidateToken.includes(preferredToken)))
+}
+
+async function createPreview(sessionId, shooterId, selection, layout, theme) {
   const sessionMatch = getSessionMatch(sessionId)
   if (!sessionMatch) {
     throw new Error('Session match not found.')
@@ -134,7 +221,7 @@ export async function createPreview(sessionId: string, shooterId: string, select
   }
 }
 
-export async function exportOverlays(sessionId: string, shooterId: string, options: OverlayExportOptions): Promise<OverlayExportResult> {
+async function exportOverlays(sessionId, shooterId, options) {
   const sessionMatch = getSessionMatch(sessionId)
   if (!sessionMatch) {
     throw new Error('Session match not found.')
@@ -145,20 +232,21 @@ export async function exportOverlays(sessionId: string, shooterId: string, optio
     throw new Error('Shooter not found.')
   }
 
-  const baseDir = options.outputDir?.trim()
+  const baseDir = (options.outputDir || '').trim()
   if (!baseDir) {
     throw new Error('Export folder not selected.')
   }
   await fs.promises.mkdir(baseDir, { recursive: true })
 
+  const files = []
   const selections = options.mode === 'single'
-    ? options.selection ? [options.selection] : []
+    ? (options.selection ? [options.selection] : [])
     : [
-        { kind: 'match-overall' as const },
-        { kind: 'division-overall' as const },
+        { kind: 'match-overall' },
+        { kind: 'division-overall' },
         ...sessionMatch.match.stages.flatMap((stage) => [
-          { kind: 'stage-overall' as const, stageId: stage.id },
-          { kind: 'stage-division' as const, stageId: stage.id }
+          { kind: 'stage-overall', stageId: stage.id },
+          { kind: 'stage-division', stageId: stage.id }
         ])
       ]
 
@@ -166,7 +254,6 @@ export async function exportOverlays(sessionId: string, shooterId: string, optio
     throw new Error('No overlay selected for export.')
   }
 
-  const files: string[] = []
   for (const selection of selections) {
     const buffer = await renderPngBuffer(buildOverlayContent(sessionMatch.match, shooter, selection), options.layout, options.theme)
     const filePath = path.join(baseDir, `${toSelectionFileName(selection)}.png`)
@@ -177,16 +264,16 @@ export async function exportOverlays(sessionId: string, shooterId: string, optio
   return { outputDir: baseDir, files }
 }
 
-async function renderPngDataUrl(content: OverlayContent, layout: OverlayLayout, theme: OverlayTheme) {
-  const buffer = await renderPngBuffer(content, layout, theme)
+async function renderPngDataUrl(content, layout, themeName) {
+  const buffer = await renderPngBuffer(content, layout, themeName)
   return `data:image/png;base64,${buffer.toString('base64')}`
 }
 
-async function renderPngBuffer(content: OverlayContent, layout: OverlayLayout, themeName: OverlayTheme) {
+async function renderPngBuffer(content, layout, themeName) {
   const svg = buildSvg(content, layout, themes[themeName])
   const { width, height } = dimensionsByLayout[layout]
   const html = `<!doctype html><html><body style="margin:0;background:transparent;overflow:hidden;">${svg}</body></html>`
-  const window = new BrowserWindow({
+  const previewWindow = new BrowserWindow({
     show: false,
     width,
     height,
@@ -196,24 +283,24 @@ async function renderPngBuffer(content: OverlayContent, layout: OverlayLayout, t
     backgroundColor: '#00000000'
   })
   try {
-    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
-    await window.webContents.executeJavaScript(
+    await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    await previewWindow.webContents.executeJavaScript(
       "document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : Promise.resolve(true)",
       true
     )
-    const image = await window.webContents.capturePage()
+    const image = await previewWindow.webContents.capturePage()
     const png = image.toPNG()
     if (png.length) {
       return png
     }
   } finally {
-    window.destroy()
+    previewWindow.destroy()
   }
 
   throw new Error('Failed to render overlay image.')
 }
 
-function buildSvg(content: OverlayContent, layout: OverlayLayout, theme: ThemeConfig) {
+function buildSvg(content, layout, theme) {
   const { width, height } = dimensionsByLayout[layout]
   const frame = framesByLayout[layout]
   const stats = Object.entries(content.stats).slice(0, layout === 'horizontal' ? 6 : 8)
@@ -279,7 +366,7 @@ function buildSvg(content: OverlayContent, layout: OverlayLayout, theme: ThemeCo
   `
 }
 
-function buildTitleText(title: string, frame: TitleFrame, theme: ThemeConfig) {
+function buildTitleText(title, frame, theme) {
   const { fontSize, textLength, textX } = fitTitleText(title, frame)
   const centerY = frame.y + frame.height / 2
   const textLengthAttribute = textLength ? ` textLength="${textLength}" lengthAdjust="spacingAndGlyphs"` : ''
@@ -288,7 +375,7 @@ function buildTitleText(title: string, frame: TitleFrame, theme: ThemeConfig) {
   return `<text x="${textX}" y="${centerY}" font-size="${fontSize}" font-weight="800" font-family="Segoe UI, sans-serif" dominant-baseline="middle"${anchorAttribute} fill="${theme.text}"${textLengthAttribute}>${escapeXml(title)}</text>`
 }
 
-function fitTitleText(title: string, frame: TitleFrame) {
+function fitTitleText(title, frame) {
   const normalizedTitle = title.trim()
   let fontSize = frame.maxFontSize
 
@@ -304,7 +391,7 @@ function fitTitleText(title: string, frame: TitleFrame) {
   }
 }
 
-function estimateTitleWidth(title: string, fontSize: number) {
+function estimateTitleWidth(title, fontSize) {
   let width = 0
   for (const character of title) {
     width += measureCharacterWidth(character)
@@ -312,7 +399,7 @@ function estimateTitleWidth(title: string, fontSize: number) {
   return width * fontSize
 }
 
-function measureCharacterWidth(character: string) {
+function measureCharacterWidth(character) {
   if (character === ' ') return 0.33
   if (/[.,:;'|!]/.test(character)) return 0.24
   if (/[`]/.test(character)) return 0.28
@@ -324,16 +411,7 @@ function measureCharacterWidth(character: string) {
   return 0.56
 }
 
-function escapeXml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
-
-function buildOverlayContent(match: ScrapedMatch, shooter: ScrapedShooter, selection: OverlayViewSelection): OverlayContent {
+function buildOverlayContent(match, shooter, selection) {
   const summary = findMatchResult(match, shooter)
 
   if (selection.kind === 'match-overall') {
@@ -401,7 +479,7 @@ function buildOverlayContent(match: ScrapedMatch, shooter: ScrapedShooter, selec
   }
 }
 
-function findMatchResult(match: ScrapedMatch, shooter: ScrapedShooter) {
+function findMatchResult(match, shooter) {
   const result = match.matchResults.find((candidate) => candidate.shooterName === shooter.name)
   if (!result) {
     throw new Error('No match result found for shooter.')
@@ -409,16 +487,113 @@ function findMatchResult(match: ScrapedMatch, shooter: ScrapedShooter) {
   return result
 }
 
-function toSelectionId(selection: OverlayViewSelection) {
+function toSelectionId(selection) {
   if (selection.kind.startsWith('stage-') && selection.stageId) {
     return `${selection.kind}:${selection.stageId}`
   }
   return selection.kind
 }
 
-function toSelectionFileName(selection: OverlayViewSelection) {
+function toSelectionFileName(selection) {
   if (selection.kind.startsWith('stage-') && selection.stageId) {
     return `${selection.kind}-${selection.stageId}`
   }
   return selection.kind
 }
+
+function escapeXml(value) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+async function createWindow() {
+  win = new BrowserWindow({
+    width: 1480,
+    height: 980,
+    minWidth: 1200,
+    minHeight: 800,
+    backgroundColor: '#08111b',
+    title: 'Stage Overlay',
+    webPreferences: {
+      preload: path.join(MAIN_DIST, 'preload.mjs'),
+      contextIsolation: true
+    }
+  })
+
+  await win.loadFile(path.join(RENDERER_DIST, 'index.html'))
+}
+
+function registerHandlers() {
+  ipcMain.handle('auth.openPractiScoreLogin', async () => {
+    const { openAuthenticationWindow } = await loadBuiltModule('scraper')
+    return openAuthenticationWindow()
+  })
+
+  ipcMain.handle('preferences.getUserProfile', () => getUserProfile())
+  ipcMain.handle('preferences.saveUserProfile', (_, profile) => saveUserProfile(profile))
+  ipcMain.handle('dialog.pickExportFolder', async (_, defaultPath) => {
+    const result = await dialog.showOpenDialog(win ?? undefined, {
+      title: 'Choose export folder',
+      defaultPath: defaultPath || undefined,
+      properties: ['openDirectory', 'createDirectory']
+    })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  ipcMain.handle('matches.fetchRecent', async () => {
+    const { fetchRecentMatches } = await loadBuiltModule('scraper')
+    return fetchRecentMatches()
+  })
+
+  ipcMain.handle('matches.importFromResultsUrl', async (_, url) => {
+    const { scrapeMatchDetails } = await loadBuiltModule('scraper')
+    const match = await scrapeMatchDetails({ url })
+    return putSessionMatch(match)
+  })
+
+  ipcMain.handle('matches.scrapeDetails', async (_, matchRef) => {
+    const { scrapeMatchDetails } = await loadBuiltModule('scraper')
+    const match = await scrapeMatchDetails(matchRef)
+    return putSessionMatch(match)
+  })
+
+  ipcMain.handle('shooters.resolveForUser', async (_, sessionId, preferredName) => {
+    const sessionMatch = getSessionMatch(sessionId)
+    if (!sessionMatch) {
+      throw new Error('Session match not found.')
+    }
+
+    return resolveShooter(sessionMatch.match, preferredName)
+  })
+
+  ipcMain.handle('overlay.preview', async (_, sessionId, shooterId, selection, layout, theme) =>
+    createPreview(sessionId, shooterId, selection, layout, theme)
+  )
+
+  ipcMain.handle('overlay.export', async (_, sessionId, shooterId, options) => exportOverlays(sessionId, shooterId, options))
+
+  ipcMain.handle('shell.openPath', (_, targetPath) => shell.openPath(targetPath))
+}
+
+app.whenReady().then(async () => {
+  registerHandlers()
+  await createWindow()
+})
+
+app.on('window-all-closed', () => {
+  clearSessions()
+  if (process.platform !== 'darwin') {
+    app.quit()
+    win = null
+  }
+})
+
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    void createWindow()
+  }
+})

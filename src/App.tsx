@@ -1,13 +1,68 @@
 import { startTransition, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { MatchReference, OverlayLayout, OverlayTheme, SessionMatch, UserProfile } from '../electron/types'
+import type { MatchReference, OverlayLayout, OverlayTheme, OverlayViewSelection, SessionMatch, UserProfile } from '../electron/types'
 
 type Status = {
   tone: 'idle' | 'success' | 'error'
   message: string
 }
 
-const defaultStatus: Status = { tone: 'idle', message: 'Authenticate, pick a source, and export stage overlays.' }
+const defaultStatus: Status = { tone: 'idle', message: 'Authenticate, pick a source, and export match or stage overlays.' }
+
+type PreviewOption = {
+  id: string
+  label: string
+  group: string
+  selection: OverlayViewSelection
+}
+
+function normalizeSearchValue(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function tokenizeSearchValue(value: string) {
+  return normalizeSearchValue(value)
+    .split(' ')
+    .filter(Boolean)
+}
+
+function matchesShooterSearch(candidate: string, query: string) {
+  const queryTokens = tokenizeSearchValue(query)
+  if (queryTokens.length === 0) return true
+
+  const candidateTokens = tokenizeSearchValue(candidate)
+  return queryTokens.every((queryToken) => candidateTokens.some((candidateToken) => candidateToken.includes(queryToken)))
+}
+
+function toPreviewOptionId(selection: OverlayViewSelection) {
+  if (selection.kind.startsWith('stage-') && selection.stageId) {
+    return `${selection.kind}:${selection.stageId}`
+  }
+  return selection.kind
+}
+
+function buildPreviewOptions(sessionMatch: SessionMatch | null): PreviewOption[] {
+  if (!sessionMatch) return []
+
+  return [
+    { id: 'match-overall', label: 'Match Overall', group: 'Match Summary', selection: { kind: 'match-overall' } },
+    { id: 'division-overall', label: 'Division Overall', group: 'Match Summary', selection: { kind: 'division-overall' } },
+    ...sessionMatch.match.stages.flatMap((stage) => [
+      {
+        id: `stage-overall:${stage.id}`,
+        label: `${stage.order}. ${stage.name} - Overall`,
+        group: 'Stage Views',
+        selection: { kind: 'stage-overall' as const, stageId: stage.id }
+      },
+      {
+        id: `stage-division:${stage.id}`,
+        label: `${stage.order}. ${stage.name} - Division`,
+        group: 'Stage Views',
+        selection: { kind: 'stage-division' as const, stageId: stage.id }
+      }
+    ])
+  ]
+}
 
 export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null)
@@ -17,13 +72,17 @@ export default function App() {
   const [loadingRecent, setLoadingRecent] = useState(false)
   const [sessionMatch, setSessionMatch] = useState<SessionMatch | null>(null)
   const [selectedShooterId, setSelectedShooterId] = useState<string | null>(null)
-  const [selectedStageId, setSelectedStageId] = useState<string | null>(null)
+  const [selectedPreviewId, setSelectedPreviewId] = useState<string | null>('match-overall')
   const [selectedTheme, setSelectedTheme] = useState<OverlayTheme>('carbon')
   const [selectedLayout, setSelectedLayout] = useState<OverlayLayout>('horizontal')
+  const [exportFolder, setExportFolder] = useState('')
+  const [exportAllOverlays, setExportAllOverlays] = useState(true)
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null)
   const [exportPath, setExportPath] = useState<string | null>(null)
   const [status, setStatus] = useState<Status>(defaultStatus)
   const [busy, setBusy] = useState(false)
+  const [shooterSearch, setShooterSearch] = useState('')
+  const [showShooterSuggestions, setShowShooterSuggestions] = useState(false)
 
   useEffect(() => {
     void window.electronAPI.getUserProfile().then((value) => {
@@ -31,34 +90,43 @@ export default function App() {
       setPreferredName(value.preferredShooterName)
       setSelectedTheme(value.preferredTheme)
       setSelectedLayout(value.preferredLayout)
+      setExportFolder(value.preferredExportFolder)
     })
   }, [])
 
   useEffect(() => {
     if (!sessionMatch || !selectedShooterId) return
-    const stageId = selectedStageId ?? sessionMatch.match.stages[0]?.id
-    if (!stageId) return
+    const previewOptions = buildPreviewOptions(sessionMatch)
+    const activePreview = previewOptions.find((option) => option.id === selectedPreviewId) ?? previewOptions[0]
+    if (!activePreview) return
 
     startTransition(() => {
       void window.electronAPI
-        .previewOverlay(sessionMatch.sessionId, selectedShooterId, stageId, selectedLayout, selectedTheme)
+        .previewOverlay(sessionMatch.sessionId, selectedShooterId, activePreview.selection, selectedLayout, selectedTheme)
         .then((preview) => {
-          setSelectedStageId(preview.stageId)
+          setSelectedPreviewId(preview.selectionId)
           setPreviewDataUrl(preview.imageDataUrl)
         })
         .catch((error: Error) => {
           setStatus({ tone: 'error', message: error.message })
         })
     })
-  }, [sessionMatch, selectedShooterId, selectedStageId, selectedLayout, selectedTheme])
+  }, [sessionMatch, selectedShooterId, selectedPreviewId, selectedLayout, selectedTheme])
 
-  async function persistProfile(nextName = preferredName, nextTheme = selectedTheme, nextLayout = selectedLayout) {
+  async function persistProfile(
+    nextName = preferredName,
+    nextTheme = selectedTheme,
+    nextLayout = selectedLayout,
+    nextExportFolder = exportFolder
+  ) {
     const saved = await window.electronAPI.saveUserProfile({
       preferredShooterName: nextName,
       preferredTheme: nextTheme,
-      preferredLayout: nextLayout
+      preferredLayout: nextLayout,
+      preferredExportFolder: nextExportFolder
     })
     setProfile(saved)
+    setExportFolder(saved.preferredExportFolder)
   }
 
   async function handleOpenLogin() {
@@ -128,23 +196,40 @@ export default function App() {
     setPreviewDataUrl(null)
     setExportPath(null)
     const resolution = await window.electronAPI.resolveShooter(nextSession.sessionId, preferredName)
-    const resolvedId = resolution.shooterId ?? resolution.candidates[0]?.id ?? null
-    setSelectedShooterId(resolvedId)
-    setSelectedStageId(nextSession.match.stages[0]?.id ?? null)
+    setSelectedShooterId(resolution.shooterId)
+    setSelectedPreviewId('match-overall')
+    const resolvedShooter = nextSession.match.shooters.find((shooter) => shooter.id === resolution.shooterId) ?? null
+    setShooterSearch(resolvedShooter?.name ?? preferredName)
   }
 
   async function handleExport() {
     if (!sessionMatch || !selectedShooterId) return
+    const activePreview = previewOptions.find((option) => option.id === selectedPreviewId) ?? previewOptions[0] ?? null
+    if (!exportFolder.trim()) {
+      setStatus({ tone: 'error', message: 'Choose an export folder before exporting overlays.' })
+      return
+    }
+    if (!exportAllOverlays && !activePreview) {
+      setStatus({ tone: 'error', message: 'Select a preview overlay before exporting a single PNG.' })
+      return
+    }
+
     setBusy(true)
-    setStatus({ tone: 'idle', message: 'Exporting stage overlays...' })
+    setStatus({ tone: 'idle', message: exportAllOverlays ? 'Exporting all overlays...' : 'Exporting the selected overlay...' })
     try {
-      await persistProfile()
+      await persistProfile(preferredName, selectedTheme, selectedLayout, exportFolder)
       const result = await window.electronAPI.exportOverlays(sessionMatch.sessionId, selectedShooterId, {
         layout: selectedLayout,
-        theme: selectedTheme
+        theme: selectedTheme,
+        outputDir: exportFolder.trim(),
+        mode: exportAllOverlays ? 'all' : 'single',
+        selection: exportAllOverlays ? null : activePreview?.selection ?? null
       })
       setExportPath(result.outputDir)
-      setStatus({ tone: 'success', message: `Exported ${result.files.length} stage overlays.` })
+      setStatus({
+        tone: 'success',
+        message: exportAllOverlays ? `Exported ${result.files.length} overlays.` : `Exported ${result.files.length} overlay.`
+      })
     } catch (error) {
       setStatus({ tone: 'error', message: (error as Error).message })
     } finally {
@@ -153,16 +238,39 @@ export default function App() {
   }
 
   const shooters = sessionMatch?.match.shooters ?? []
-  const stages = sessionMatch?.match.stages ?? []
+  const selectedShooter = shooters.find((shooter) => shooter.id === selectedShooterId) ?? null
+  const filteredShooters = shooters.filter((shooter) => matchesShooterSearch(shooter.name, shooterSearch))
+  const previewOptions = buildPreviewOptions(sessionMatch)
+  const previewGroups = previewOptions.reduce<Map<string, PreviewOption[]>>((groups, option) => {
+    const entries = groups.get(option.group) ?? []
+    entries.push(option)
+    groups.set(option.group, entries)
+    return groups
+  }, new Map())
+
+  function handleSelectShooter(shooterId: string) {
+    const shooter = shooters.find((candidate) => candidate.id === shooterId) ?? null
+    setSelectedShooterId(shooterId)
+    setShooterSearch(shooter?.name ?? '')
+    setShowShooterSuggestions(false)
+  }
+
+  async function handleChooseExportFolder() {
+    const chosenFolder = await window.electronAPI.pickExportFolder(exportFolder)
+    if (!chosenFolder) return
+
+    setExportFolder(chosenFolder)
+    await persistProfile(preferredName, selectedTheme, selectedLayout, chosenFolder)
+  }
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div>
           <p className="eyebrow">Stateless PractiScore Overlay Builder</p>
-          <h1>Scrape once. Export stage graphics. Drop them into Resolve.</h1>
+          <h1>Scrape once. Export match and stage graphics. Drop them into Resolve.</h1>
           <p className="subtitle">
-            This app keeps score data only for the current session and exports one stage image per shooter-focused overlay.
+            This app keeps score data only for the current session and exports match and stage overlays for one shooter at a time.
           </p>
         </div>
         <div className={`status-card ${status.tone}`}>{status.message}</div>
@@ -270,29 +378,90 @@ export default function App() {
             <>
               <label className="field">
                 <span>Focus shooter</span>
-                <select value={selectedShooterId ?? ''} onChange={(event) => setSelectedShooterId(event.target.value || null)}>
-                  {shooters.map((shooter) => (
-                    <option key={shooter.id} value={shooter.id}>
-                      {shooter.name}
-                    </option>
+                <div className="searchable-picker">
+                  <input
+                    value={shooterSearch}
+                    onChange={(event) => {
+                      setShooterSearch(event.target.value)
+                      setShowShooterSuggestions(true)
+                    }}
+                    onFocus={() => setShowShooterSuggestions(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setShowShooterSuggestions(false), 120)
+                    }}
+                    placeholder="Search shooter by name"
+                  />
+                  {showShooterSuggestions && (
+                    <div className="picker-results">
+                      {filteredShooters.length > 0 ? (
+                        filteredShooters.map((shooter) => (
+                          <button
+                            key={shooter.id}
+                            className={`picker-option ${selectedShooterId === shooter.id ? 'active' : ''}`}
+                            type="button"
+                            onMouseDown={(event) => {
+                              event.preventDefault()
+                              handleSelectShooter(shooter.id)
+                            }}
+                          >
+                            <strong>{shooter.name}</strong>
+                            <span>{shooter.division || 'Division unknown'}</span>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="empty-state picker-empty">No shooters match that search.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </label>
+              <p className="selection-meta">
+                {selectedShooter
+                  ? `Detected division: ${selectedShooter.division || 'Not found on results page'}`
+                  : 'No automatic shooter match found. Search to choose the correct shooter.'}
+              </p>
+
+              <label className="field">
+                <span>Preview overlay</span>
+                <select
+                  className="preview-overlay-select"
+                  value={selectedPreviewId ?? ''}
+                  onChange={(event) => setSelectedPreviewId(event.target.value || null)}
+                >
+                  {Array.from(previewGroups.entries()).map(([group, options]) => (
+                    <optgroup key={group} label={group}>
+                      {options.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </label>
 
               <label className="field">
-                <span>Preview stage</span>
-                <select value={selectedStageId ?? ''} onChange={(event) => setSelectedStageId(event.target.value || null)}>
-                  {stages.map((stage) => (
-                    <option key={stage.id} value={stage.id}>
-                      {stage.order}. {stage.name}
-                    </option>
-                  ))}
-                </select>
+                <span>Export folder</span>
+                <div className="folder-picker-row">
+                  <input value={exportFolder} readOnly placeholder="Choose a folder for exported overlays" />
+                  <button className="secondary-btn" type="button" onClick={() => void handleChooseExportFolder()}>
+                    Choose Folder
+                  </button>
+                </div>
+              </label>
+
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={exportAllOverlays}
+                  onChange={(event) => setExportAllOverlays(event.target.checked)}
+                />
+                <span>Export all overlays</span>
               </label>
 
               <div className="export-actions">
-                <button className="primary-btn" onClick={() => void handleExport()} disabled={busy || !selectedShooterId}>
-                  Export All Stage PNGs
+                <button className="primary-btn" onClick={() => void handleExport()} disabled={busy || !selectedShooterId || !exportFolder.trim()}>
+                  {exportAllOverlays ? 'Export All Overlay PNGs' : 'Export Preview Overlay PNG'}
                 </button>
                 {exportPath && (
                   <button className="secondary-btn" onClick={() => void window.electronAPI.openPath(exportPath)}>
@@ -302,7 +471,7 @@ export default function App() {
               </div>
             </>
           ) : (
-            <p className="empty-state">Load a match to preview overlays and export stages.</p>
+            <p className="empty-state">Load a match to preview overlays and export match and stage views.</p>
           )}
         </div>
       </section>

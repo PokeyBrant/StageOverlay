@@ -2,11 +2,18 @@ export interface UserProfile {
   preferredShooterName: string
   preferredTheme: OverlayTheme
   preferredLayout: OverlayLayout
+  preferredExportFolder: string
 }
 
 export type MatchSource = 'dashboard' | 'recent' | 'manual'
 export type OverlayTheme = 'carbon' | 'sunset'
 export type OverlayLayout = 'horizontal' | 'vertical'
+export type OverlayViewKind = 'match-overall' | 'division-overall' | 'stage-overall' | 'stage-division'
+
+export interface OverlayViewSelection {
+  kind: OverlayViewKind
+  stageId?: string | null
+}
 
 export interface MatchReference {
   id: string
@@ -19,11 +26,13 @@ export interface MatchReference {
 
 export interface ScrapedStageResult {
   shooterName: string
-  placement?: string
-  division?: string
+  overallPlacement?: string
+  divisionPlacement?: string | null
+  division?: string | null
   className?: string
   powerFactor?: string
   stats: Record<string, string>
+  divisionStats?: Record<string, string> | null
 }
 
 export interface ScrapedStage {
@@ -36,6 +45,18 @@ export interface ScrapedStage {
 export interface ScrapedShooter {
   id: string
   name: string
+  division: string | null
+}
+
+export interface ScrapedMatchResult {
+  shooterName: string
+  overallPlacement?: string
+  divisionPlacement?: string | null
+  division?: string | null
+  className?: string
+  powerFactor?: string
+  stats: Record<string, string>
+  divisionStats?: Record<string, string> | null
 }
 
 export interface ScrapedMatch {
@@ -44,6 +65,7 @@ export interface ScrapedMatch {
   resultsUrl: string
   name: string
   date?: string | null
+  matchResults: ScrapedMatchResult[]
   stages: ScrapedStage[]
   shooters: ScrapedShooter[]
 }
@@ -60,13 +82,16 @@ export interface ShooterResolution {
 }
 
 export interface OverlayPreview {
-  stageId: string
+  selectionId: string
   imageDataUrl: string
 }
 
 export interface OverlayExportOptions {
   theme: OverlayTheme
   layout: OverlayLayout
+  outputDir: string
+  mode: 'all' | 'single'
+  selection?: OverlayViewSelection | null
 }
 
 export interface OverlayExportResult {

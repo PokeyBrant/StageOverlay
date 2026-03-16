@@ -6,7 +6,8 @@ import type { UserProfile } from './types'
 const defaultProfile: UserProfile = {
   preferredShooterName: '',
   preferredTheme: 'carbon',
-  preferredLayout: 'horizontal'
+  preferredLayout: 'horizontal',
+  preferredExportFolder: ''
 }
 
 function getPreferencesPath() {

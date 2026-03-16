@@ -1,11 +1,47 @@
 import path from 'node:path'
+import crypto from 'node:crypto'
+import fs from 'node:fs'
 import { app } from 'electron'
 import { chromium } from 'playwright'
-import { parseDashboardMatches, parseResultsHtml } from './parsers'
-import type { MatchReference, ScrapedMatch } from './types'
+import { findShooterResult, parseDashboardMatches, parseResultsHtml, parseResultsTable } from './parsers'
+import type { Locator, Page } from 'playwright'
+import type { MatchReference, ScrapedMatch, ScrapedStageResult } from './types'
+
+type DropdownOption = {
+  value: string
+  label: string
+}
+
+type VisibleTableSnapshot = {
+  matchName: string
+  headers: string[]
+  rows: string[][]
+}
+
+type ScopeScrape = {
+  matchName: string
+  results: ScrapedStageResult[]
+  shooterName: string | null
+  shooterDivision: string | null
+}
 
 function getUserDataDir() {
   return path.join(app.getPath('userData'), 'playwright-profile')
+}
+
+async function getPreferredShooterName() {
+  const filePath = path.join(app.getPath('userData'), 'preferences.json')
+  if (!fs.existsSync(filePath)) {
+    return ''
+  }
+
+  try {
+    const raw = await fs.promises.readFile(filePath, 'utf8')
+    const parsed = JSON.parse(raw) as { preferredShooterName?: string }
+    return parsed.preferredShooterName?.trim() || ''
+  } catch {
+    return ''
+  }
 }
 
 async function createContext() {
@@ -34,51 +70,7 @@ export async function fetchRecentMatches() {
     await page.waitForTimeout(5000)
 
     const dashboardHtml = await page.content()
-    const matches = parseDashboardMatches(dashboardHtml)
-
-    const viewAllUrl = await page.evaluate(() => {
-      const recentHeader = Array.from(document.querySelectorAll('h4')).find((node) =>
-        (node.textContent || '').includes('Recent Events')
-      )
-      const link = recentHeader?.querySelector('a') as HTMLAnchorElement | null
-      return link?.href || null
-    })
-
-    if (!viewAllUrl) {
-      return matches
-    }
-
-    await page.goto(viewAllUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
-    await page.waitForTimeout(3000)
-
-    const historyMatches = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('table tbody tr'))
-      return rows
-        .map((row, index) => {
-          const cells = row.querySelectorAll('td')
-          const link = row.querySelector('a.matchLink') as HTMLAnchorElement | null
-          const matchId = link?.getAttribute('matchid') || row.getAttribute('matchid') || `${index}`
-          const name = link?.textContent?.trim() || ''
-          const date = cells[2]?.textContent?.trim() || null
-          if (!name || !matchId) return null
-          return {
-            id: `recent-${matchId}`,
-            name,
-            date,
-            source: 'recent' as const,
-            url: `https://practiscore.com/results/new/${matchId}`,
-            resultsUrl: `https://practiscore.com/results/new/${matchId}`
-          }
-        })
-        .filter(Boolean)
-    })
-
-    const merged = new Map<string, MatchReference>()
-    for (const match of matches) merged.set(match.id, match)
-    for (const match of historyMatches) {
-      if (match) merged.set(match.id, match)
-    }
-    return Array.from(merged.values())
+    return parseDashboardMatches(dashboardHtml)
   } finally {
     await context.close()
   }
@@ -88,14 +80,18 @@ export async function scrapeMatchDetails(matchRef: MatchReference | { url: strin
   const context = await createContext()
   try {
     const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage()
-    const initialUrl = matchRef.url
+    const initialUrl = 'resultsUrl' in matchRef && matchRef.resultsUrl ? matchRef.resultsUrl : matchRef.url
     await page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(4000)
 
-    let resultsUrl = await page.evaluate(() => {
-      const directLink = document.querySelector('a[href*="/results/new/"]') as HTMLAnchorElement | null
-      return directLink?.href || null
-    })
+    let resultsUrl = 'resultsUrl' in matchRef ? matchRef.resultsUrl ?? null : null
+
+    if (!resultsUrl) {
+      resultsUrl = await page.evaluate(() => {
+        const directLink = document.querySelector('a[href*="/results/new/"]') as HTMLAnchorElement | null
+        return directLink?.href || null
+      })
+    }
 
     if (!resultsUrl && /\/results\//i.test(initialUrl)) {
       resultsUrl = initialUrl
@@ -111,8 +107,9 @@ export async function scrapeMatchDetails(matchRef: MatchReference | { url: strin
 
     await page.goto(resultsUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.waitForTimeout(4000)
-    const html = await page.content()
-    const parsed = parseResultsHtml(html, resultsUrl)
+    const preferredShooterName = await getPreferredShooterName()
+    const dropdownDrivenMatch = await scrapeDropdownDrivenMatch(page, resultsUrl, preferredShooterName)
+    const parsed = dropdownDrivenMatch ?? parseResultsHtml(await page.content(), resultsUrl)
     return {
       ...parsed,
       sourceUrl: initialUrl,
@@ -121,4 +118,237 @@ export async function scrapeMatchDetails(matchRef: MatchReference | { url: strin
   } finally {
     await context.close()
   }
+}
+
+async function scrapeDropdownDrivenMatch(page: Page, resultsUrl: string, preferredShooterName: string): Promise<ScrapedMatch | null> {
+  const controls = await getResultsControls(page)
+  if (!controls) {
+    return null
+  }
+
+  const { scopeSelect, divisionSelect, scopeOptions } = controls
+  if (scopeOptions.length === 0) {
+    return null
+  }
+
+  const matchScope = await scrapeScope(page, scopeSelect, divisionSelect, scopeOptions[0]!, preferredShooterName, null, null)
+  const stages = []
+  let resolvedShooterName = matchScope.shooterName
+  let resolvedShooterDivision = matchScope.shooterDivision
+
+  const stageOptions = scopeOptions.slice(1)
+  for (let index = 0; index < stageOptions.length; index += 1) {
+    const scopeOption = stageOptions[index]!
+    const stageScope = await scrapeScope(page, scopeSelect, divisionSelect, scopeOption, preferredShooterName, resolvedShooterName, resolvedShooterDivision)
+    resolvedShooterName = resolvedShooterName ?? stageScope.shooterName
+    resolvedShooterDivision = resolvedShooterDivision ?? stageScope.shooterDivision
+    stages.push({
+      id: crypto.randomUUID(),
+      name: scopeOption.label || `Stage ${index + 1}`,
+      order: index + 1,
+      results: stageScope.results
+    })
+  }
+
+  const shooterMap = new Map<string, { id: string; name: string; division: string | null }>()
+  for (const result of matchScope.results) {
+    const key = result.shooterName.toLowerCase()
+    if (!shooterMap.has(key)) {
+      shooterMap.set(key, {
+        id: crypto.randomUUID(),
+        name: result.shooterName,
+        division: result.division ?? null
+      })
+    }
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    sourceUrl: resultsUrl,
+    resultsUrl,
+    name: matchScope.matchName,
+    matchResults: matchScope.results,
+    stages,
+    shooters: Array.from(shooterMap.values())
+  }
+}
+
+async function scrapeScope(
+  page: Page,
+  scopeSelect: Locator,
+  divisionSelect: Locator,
+  scopeOption: DropdownOption,
+  preferredShooterName: string,
+  shooterName: string | null,
+  shooterDivision: string | null
+): Promise<ScopeScrape> {
+  await selectDropdownOption(scopeSelect, scopeOption)
+  await waitForResultsTable(page)
+
+  const overallOption = await findOverallDivisionOption(divisionSelect)
+  if (overallOption) {
+    await selectDropdownOption(divisionSelect, overallOption)
+    await waitForResultsTable(page)
+  }
+
+  const overallSnapshot = await readVisibleResultsTable(page)
+  const results = parseResultsTable(overallSnapshot.headers, overallSnapshot.rows)
+  if (results.length === 0) {
+    throw new Error(`Could not read result rows for ${scopeOption.label || 'the selected scope'}.`)
+  }
+
+  const matchedOverallResult = findShooterResult(results, preferredShooterName, shooterName)
+  const resolvedShooterName = shooterName ?? matchedOverallResult?.shooterName ?? null
+  const resolvedShooterDivision = shooterDivision ?? matchedOverallResult?.division ?? null
+
+  if (resolvedShooterDivision) {
+    const divisionOptions = await listDropdownOptions(divisionSelect)
+    const matchingDivisionOption = divisionOptions.find((option) => normalizeOptionLabel(option.label) === normalizeOptionLabel(resolvedShooterDivision))
+    if (matchingDivisionOption && normalizeOptionLabel(matchingDivisionOption.label) !== 'overall') {
+      await selectDropdownOption(divisionSelect, matchingDivisionOption)
+      await waitForResultsTable(page)
+
+      const divisionSnapshot = await readVisibleResultsTable(page)
+      const divisionResults = parseResultsTable(divisionSnapshot.headers, divisionSnapshot.rows)
+      const divisionResult = findShooterResult(divisionResults, preferredShooterName, resolvedShooterName)
+      if (matchedOverallResult && divisionResult) {
+        matchedOverallResult.division = matchedOverallResult.division ?? resolvedShooterDivision
+        matchedOverallResult.divisionPlacement = divisionResult.overallPlacement ?? null
+        matchedOverallResult.className = matchedOverallResult.className ?? divisionResult.className
+        matchedOverallResult.powerFactor = matchedOverallResult.powerFactor ?? divisionResult.powerFactor
+        matchedOverallResult.divisionStats = divisionResult.stats
+      }
+
+      if (overallOption) {
+        await selectDropdownOption(divisionSelect, overallOption)
+        await waitForResultsTable(page)
+      }
+    }
+  }
+
+  return {
+    matchName: overallSnapshot.matchName,
+    results,
+    shooterName: resolvedShooterName,
+    shooterDivision: resolvedShooterDivision
+  }
+}
+
+async function getResultsControls(page: Page) {
+  try {
+    await page.waitForFunction(() => document.querySelectorAll('select').length >= 2, { timeout: 15000 })
+  } catch {
+    return null
+  }
+
+  const visibleSelects = page.locator('select:visible')
+  const visibleCount = await visibleSelects.count()
+  if (visibleCount < 2) {
+    return null
+  }
+
+  const scopeSelect = visibleSelects.nth(0)
+  const divisionSelect = visibleSelects.nth(1)
+  const scopeOptions = await listDropdownOptions(scopeSelect)
+  return {
+    scopeSelect,
+    divisionSelect,
+    scopeOptions: scopeOptions.filter((option) => option.label)
+  }
+}
+
+async function listDropdownOptions(select: Locator): Promise<DropdownOption[]> {
+  return select.locator('option').evaluateAll((options) =>
+    options
+      .map((option) => ({
+        value: (option as HTMLOptionElement).value ?? '',
+        label: option.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+        disabled: (option as HTMLOptionElement).disabled
+      }))
+      .filter((option) => !option.disabled && option.label)
+      .map(({ value, label }) => ({ value, label }))
+  )
+}
+
+async function findOverallDivisionOption(select: Locator) {
+  const options = await listDropdownOptions(select)
+  return options.find((option) => normalizeOptionLabel(option.label) === 'overall') ?? options[0] ?? null
+}
+
+async function selectDropdownOption(select: Locator, option: DropdownOption) {
+  if (option.value) {
+    await select.selectOption({ value: option.value })
+    return
+  }
+
+  await select.selectOption({ label: option.label })
+}
+
+async function waitForResultsTable(page: Page) {
+  await page.waitForFunction(() => {
+    const isVisible = (element: Element) => {
+      const style = window.getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0
+    }
+
+    return Array.from(document.querySelectorAll('table')).some((table) => {
+      if (!isVisible(table)) return false
+      const headers = Array.from(table.querySelectorAll('thead th, tr th')).map((node) => node.textContent?.toLowerCase().trim() || '')
+      const hasShooter = headers.some((header) => ['name', 'competitor', 'shooter'].some((hint) => header.includes(hint)))
+      const hasMetrics = headers.some((header) =>
+        ['time', 'hit factor', 'hf', 'points', 'penalties', 'penalty', 'percent', '%', 'stage points'].some((hint) => header.includes(hint))
+      )
+      return hasShooter && hasMetrics && table.querySelectorAll('tbody tr').length > 0
+    })
+  }, { timeout: 15000 })
+}
+
+async function readVisibleResultsTable(page: Page): Promise<VisibleTableSnapshot> {
+  const snapshot = await page.evaluate(() => {
+    const isVisible = (element: Element) => {
+      const style = window.getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0
+    }
+
+    const scoreHeaderHints = ['time', 'hit factor', 'hf', 'points', 'penalties', 'penalty', 'percent', '%', 'stage points']
+    const shooterHeaderHints = ['name', 'competitor', 'shooter']
+    const tables = Array.from(document.querySelectorAll('table'))
+      .filter((table) => isVisible(table))
+      .map((table) => {
+        const headers = Array.from(table.querySelectorAll('thead th, tr th')).map((node) => node.textContent?.replace(/\s+/g, ' ').trim() || '')
+        const rows = Array.from(table.querySelectorAll('tbody tr')).map((row) =>
+          Array.from(row.querySelectorAll('td, th')).map((cell) => cell.textContent?.replace(/\s+/g, ' ').trim() || '')
+        )
+        return { headers, rows }
+      })
+      .filter((table) => {
+        const normalizedHeaders = table.headers.map((header) => header.toLowerCase())
+        const hasShooter = normalizedHeaders.some((header) => shooterHeaderHints.some((hint) => header.includes(hint)))
+        const hasMetrics = normalizedHeaders.some((header) => scoreHeaderHints.some((hint) => header.includes(hint)))
+        return hasShooter && hasMetrics && table.rows.length > 0
+      })
+      .sort((left, right) => right.rows.length - left.rows.length)
+
+    const chosenTable = tables[0] ?? null
+    return {
+      matchName:
+        document.querySelector('h1')?.textContent?.replace(/\s+/g, ' ').trim() ||
+        document.title.replace(/\s*-\s*practiscore\.com/i, '').trim() ||
+        'PractiScore Match',
+      headers: chosenTable?.headers ?? [],
+      rows: chosenTable?.rows ?? []
+    }
+  })
+
+  if (snapshot.headers.length === 0 || snapshot.rows.length === 0) {
+    throw new Error('Could not identify the active PractiScore results table.')
+  }
+
+  return snapshot
+}
+
+function normalizeOptionLabel(value: string) {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim()
 }

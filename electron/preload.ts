@@ -1,5 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { MatchReference, OverlayExportOptions, OverlayExportResult, OverlayPreview, OverlayTheme, SessionMatch, ShooterResolution, UserProfile } from './types'
+import type {
+  MatchReference,
+  OverlayExportOptions,
+  OverlayExportResult,
+  OverlayPreview,
+  OverlayTheme,
+  OverlayViewSelection,
+  SessionMatch,
+  ShooterResolution,
+  UserProfile
+} from './types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   openPractiScoreLogin: () => ipcRenderer.invoke('auth.openPractiScoreLogin'),
@@ -9,8 +19,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importFromResultsUrl: (url: string): Promise<SessionMatch> => ipcRenderer.invoke('matches.importFromResultsUrl', url),
   scrapeDetails: (matchRef: MatchReference): Promise<SessionMatch> => ipcRenderer.invoke('matches.scrapeDetails', matchRef),
   resolveShooter: (sessionId: string, preferredName: string): Promise<ShooterResolution> => ipcRenderer.invoke('shooters.resolveForUser', sessionId, preferredName),
-  previewOverlay: (sessionId: string, shooterId: string, stageId: string, layout: string, theme: OverlayTheme): Promise<OverlayPreview> =>
-    ipcRenderer.invoke('overlay.preview', sessionId, shooterId, stageId, layout, theme),
+  pickExportFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog.pickExportFolder', defaultPath),
+  previewOverlay: (sessionId: string, shooterId: string, selection: OverlayViewSelection, layout: string, theme: OverlayTheme): Promise<OverlayPreview> =>
+    ipcRenderer.invoke('overlay.preview', sessionId, shooterId, selection, layout, theme),
   exportOverlays: (sessionId: string, shooterId: string, options: OverlayExportOptions): Promise<OverlayExportResult> =>
     ipcRenderer.invoke('overlay.export', sessionId, shooterId, options),
   openPath: (targetPath: string): Promise<string> => ipcRenderer.invoke('shell.openPath', targetPath)
