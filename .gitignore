@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-electron/
+*.tsbuildinfo
+*.log
+.DS_Store
+Thumbs.db
+electron/*.js
+electron/*.d.ts
+!electron/jsdom.d.ts
+vite.config.js
+vite.config.d.ts

@@ -1,0 +1,203 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(255, 159, 28, 0.18), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(27, 77, 117, 0.35), transparent 40%),
+    #06101a;
+  color: #f5f7fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 1200px;
+  background: transparent;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  padding: 32px;
+  display: grid;
+  gap: 24px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.8fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.78rem;
+  color: #ffb347;
+}
+
+h1 {
+  margin: 0;
+  font-size: 3.1rem;
+  line-height: 1.04;
+}
+
+h2 {
+  margin: 0 0 18px;
+  font-size: 1.3rem;
+}
+
+.subtitle,
+.empty-state,
+.match-card span,
+.field span,
+.status-card,
+.panel-head span {
+  color: #c6d3e5;
+}
+
+.grid {
+  display: grid;
+  gap: 24px;
+}
+
+.two-up {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.panel,
+.status-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 28px;
+  background: rgba(9, 17, 28, 0.78);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+}
+
+.panel {
+  padding: 24px;
+}
+
+.status-card {
+  padding: 20px 22px;
+  min-height: 120px;
+}
+
+.status-card.success {
+  border-color: rgba(44, 182, 125, 0.45);
+}
+
+.status-card.error {
+  border-color: rgba(255, 92, 92, 0.45);
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.field.compact {
+  flex: 1;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f5f7fb;
+  border-radius: 16px;
+  padding: 14px 16px;
+}
+
+.row,
+.source-actions,
+.export-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.primary-btn,
+.secondary-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 14px 20px;
+  cursor: pointer;
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+
+.primary-btn:hover,
+.secondary-btn:hover,
+.match-card:hover {
+  transform: translateY(-1px);
+}
+
+.primary-btn {
+  background: linear-gradient(135deg, #ff9f1c, #ffd166);
+  color: #09111c;
+  font-weight: 700;
+}
+
+.secondary-btn {
+  background: rgba(255, 255, 255, 0.09);
+  color: #f5f7fb;
+}
+
+.match-list {
+  display: grid;
+  gap: 12px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.match-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  text-align: left;
+  padding: 16px;
+  display: grid;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.match-source {
+  text-transform: capitalize;
+  color: #ffb347;
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.preview-panel {
+  min-height: 420px;
+}
+
+.preview-image {
+  width: 100%;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.url-form {
+  display: grid;
+  gap: 12px;
+}
