@@ -45,22 +45,13 @@ function buildPreviewOptions(sessionMatch: SessionMatch | null): PreviewOption[]
   if (!sessionMatch) return []
 
   return [
-    { id: 'match-overall', label: 'Match Overall', group: 'Match Summary', selection: { kind: 'match-overall' } },
-    { id: 'division-overall', label: 'Division Overall', group: 'Match Summary', selection: { kind: 'division-overall' } },
-    ...sessionMatch.match.stages.flatMap((stage) => [
-      {
-        id: `stage-overall:${stage.id}`,
-        label: `${stage.order}. ${stage.name} - Overall`,
-        group: 'Stage Views',
-        selection: { kind: 'stage-overall' as const, stageId: stage.id }
-      },
-      {
-        id: `stage-division:${stage.id}`,
-        label: `${stage.order}. ${stage.name} - Division`,
-        group: 'Stage Views',
-        selection: { kind: 'stage-division' as const, stageId: stage.id }
-      }
-    ])
+    { id: 'match-summary', label: 'Match Summary', group: 'Match Summary', selection: { kind: 'match-summary' } },
+    ...sessionMatch.match.stages.map((stage) => ({
+      id: `stage-summary:${stage.id}`,
+      label: `${stage.order}. ${stage.name}`,
+      group: 'Stage Views',
+      selection: { kind: 'stage-summary' as const, stageId: stage.id }
+    }))
   ]
 }
 
@@ -72,7 +63,7 @@ export default function App() {
   const [loadingRecent, setLoadingRecent] = useState(false)
   const [sessionMatch, setSessionMatch] = useState<SessionMatch | null>(null)
   const [selectedShooterId, setSelectedShooterId] = useState<string | null>(null)
-  const [selectedPreviewId, setSelectedPreviewId] = useState<string | null>('match-overall')
+  const [selectedPreviewId, setSelectedPreviewId] = useState<string | null>('match-summary')
   const [selectedTheme, setSelectedTheme] = useState<OverlayTheme>('carbon')
   const [selectedLayout, setSelectedLayout] = useState<OverlayLayout>('horizontal')
   const [exportFolder, setExportFolder] = useState('')
@@ -197,7 +188,7 @@ export default function App() {
     setExportPath(null)
     const resolution = await window.electronAPI.resolveShooter(nextSession.sessionId, preferredName)
     setSelectedShooterId(resolution.shooterId)
-    setSelectedPreviewId('match-overall')
+    setSelectedPreviewId('match-summary')
     const resolvedShooter = nextSession.match.shooters.find((shooter) => shooter.id === resolution.shooterId) ?? null
     setShooterSearch(resolvedShooter?.name ?? preferredName)
   }
@@ -471,7 +462,7 @@ export default function App() {
               </div>
             </>
           ) : (
-            <p className="empty-state">Load a match to preview overlays and export match and stage views.</p>
+            <p className="empty-state">Load a match to preview overlays and export the match summary plus one stage view per stage.</p>
           )}
         </div>
       </section>
@@ -479,7 +470,6 @@ export default function App() {
       <section className="panel preview-panel">
         <div className="panel-head">
           <h2>5. Preview</h2>
-          <span>{profile ? `Default shooter: ${profile.preferredShooterName || 'Not set'}` : 'Loading preferences...'}</span>
         </div>
         {previewDataUrl ? <img className="preview-image" src={previewDataUrl} alt="Overlay preview" /> : <p className="empty-state">Preview appears here once a match and shooter are selected.</p>}
       </section>

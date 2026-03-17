@@ -3,7 +3,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { app } from 'electron'
 import { chromium } from 'playwright'
-import { findShooterResult, parseDashboardMatches, parseResultsHtml, parseResultsTable } from './parsers'
+import { cleanMatchTitle, findShooterResult, parseDashboardMatches, parseResultsHtml, parseResultsTable } from './parsers'
 import type { Locator, Page } from 'playwright'
 import type { MatchReference, ScrapedMatch, ScrapedStageResult } from './types'
 
@@ -110,10 +110,12 @@ export async function scrapeMatchDetails(matchRef: MatchReference | { url: strin
     const preferredShooterName = await getPreferredShooterName()
     const dropdownDrivenMatch = await scrapeDropdownDrivenMatch(page, resultsUrl, preferredShooterName)
     const parsed = dropdownDrivenMatch ?? parseResultsHtml(await page.content(), resultsUrl)
+    const canonicalMatchName = 'name' in matchRef && matchRef.name ? cleanMatchTitle(matchRef.name) : cleanMatchTitle(parsed.name)
     return {
       ...parsed,
       sourceUrl: initialUrl,
-      resultsUrl
+      resultsUrl,
+      name: canonicalMatchName
     } satisfies ScrapedMatch
   } finally {
     await context.close()
@@ -166,7 +168,7 @@ async function scrapeDropdownDrivenMatch(page: Page, resultsUrl: string, preferr
     id: crypto.randomUUID(),
     sourceUrl: resultsUrl,
     resultsUrl,
-    name: matchScope.matchName,
+    name: cleanMatchTitle(matchScope.matchName),
     matchResults: matchScope.results,
     stages,
     shooters: Array.from(shooterMap.values())
@@ -227,7 +229,7 @@ async function scrapeScope(
   }
 
   return {
-    matchName: overallSnapshot.matchName,
+    matchName: cleanMatchTitle(overallSnapshot.matchName),
     results,
     shooterName: resolvedShooterName,
     shooterDivision: resolvedShooterDivision

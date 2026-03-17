@@ -33,6 +33,14 @@ export function cleanShooterName(value: string) {
     .trim()
 }
 
+export function cleanMatchTitle(value: string) {
+  return value
+    .replace(/\s*\|\s*practiscore\s*$/i, '')
+    .replace(/\s*-\s*practiscore\.com\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function resolveShooter(match: ScrapedMatch, preferredName: string): ShooterResolution {
   const normalizedPreferred = normalizeName(preferredName)
   if (!normalizedPreferred) {
@@ -109,11 +117,12 @@ export function parseDashboardMatches(html: string): MatchReference[] {
 export function parseResultsHtml(html: string, sourceUrl: string): ScrapedMatch {
   const dom = new JSDOM(html)
   const document = dom.window.document as Document
-  const matchName =
+  const matchName = cleanMatchTitle(
     document.querySelector('h1')?.textContent?.trim() ||
     document.querySelector('h2')?.textContent?.trim() ||
     document.title.replace(/\s*-\s*practiscore\.com/i, '').trim() ||
     'PractiScore Match'
+  )
 
   const tables = collectTables(document)
   const matchResults: ScrapedMatchResult[] = []

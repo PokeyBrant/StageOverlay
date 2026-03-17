@@ -8,7 +8,7 @@ export interface UserProfile {
 export type MatchSource = 'dashboard' | 'recent' | 'manual'
 export type OverlayTheme = 'carbon' | 'sunset'
 export type OverlayLayout = 'horizontal' | 'vertical'
-export type OverlayViewKind = 'match-overall' | 'division-overall' | 'stage-overall' | 'stage-division'
+export type OverlayViewKind = 'match-summary' | 'stage-summary'
 
 export interface OverlayViewSelection {
   kind: OverlayViewKind
