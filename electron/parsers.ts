@@ -33,6 +33,15 @@ export function cleanShooterName(value: string) {
     .trim()
 }
 
+function parseShooterCell(value: string) {
+  const raw = value.trim()
+  const embeddedPlacement = raw.match(/^\s*(\d+)\s*[-.)]\s*/)?.[1] ?? null
+  return {
+    shooterName: cleanShooterName(raw),
+    embeddedPlacement
+  }
+}
+
 export function cleanMatchTitle(value: string) {
   return value
     .replace(/\s*\|\s*practiscore\s*$/i, '')
@@ -354,6 +363,30 @@ function findHeaderIndex(headers: string[], hints: string[]) {
   return headers.findIndex((header) => hints.some((hint) => header.toLowerCase().includes(hint)))
 }
 
+function inferPlacementIndex(headers: string[], rows: string[][], shooterIndex: number) {
+  const explicitPlacementIndex = findHeaderIndex(headers, PLACE_HEADER_HINTS)
+  if (explicitPlacementIndex >= 0) {
+    return explicitPlacementIndex
+  }
+
+  for (let index = 0; index < shooterIndex; index += 1) {
+    const columnValues = rows
+      .map((row) => row[index]?.trim() || '')
+      .filter(Boolean)
+
+    if (columnValues.length === 0) {
+      continue
+    }
+
+    const numericValueCount = columnValues.filter((value) => /^\d+$/.test(value)).length
+    if (numericValueCount === columnValues.length) {
+      return index
+    }
+  }
+
+  return -1
+}
+
 function prettifyHeader(header: string) {
   return header
     .replace(/\s+/g, ' ')
@@ -420,13 +453,14 @@ function getTableHeadings(table: HTMLTableElement) {
 }
 
 function parseRows(headers: string[], rows: string[][], shooterIndex: number, divisionIndex: number) {
-  const placementIndex = findHeaderIndex(headers, PLACE_HEADER_HINTS)
+  const placementIndex = inferPlacementIndex(headers, rows, shooterIndex)
   const classIndex = findHeaderIndex(headers, CLASS_HEADER_HINTS)
   const powerFactorIndex = findHeaderIndex(headers, POWER_FACTOR_HEADER_HINTS)
 
   return rows
     .map((row) => {
-      const shooterName = cleanShooterName(row[shooterIndex]?.trim() || '')
+      const shooterCell = parseShooterCell(row[shooterIndex]?.trim() || '')
+      const shooterName = shooterCell.shooterName
       if (!shooterName) return null
 
       const division = divisionIndex >= 0 ? row[divisionIndex]?.trim() || null : null
@@ -443,7 +477,9 @@ function parseRows(headers: string[], rows: string[][], shooterIndex: number, di
 
       return {
         shooterName,
-        overallPlacement: placementIndex >= 0 ? row[placementIndex]?.trim() || undefined : undefined,
+        overallPlacement: placementIndex >= 0
+          ? row[placementIndex]?.trim() || shooterCell.embeddedPlacement || undefined
+          : shooterCell.embeddedPlacement || undefined,
         divisionPlacement: null,
         division,
         className,
@@ -465,12 +501,13 @@ function applyDivisionRows(
   const shooterIndex = findHeaderIndex(headers, SHOOTER_HEADER_HINTS)
   if (shooterIndex === -1) return
 
-  const placementIndex = findHeaderIndex(headers, PLACE_HEADER_HINTS)
+  const placementIndex = inferPlacementIndex(headers, rows, shooterIndex)
   const classIndex = findHeaderIndex(headers, CLASS_HEADER_HINTS)
   const powerFactorIndex = findHeaderIndex(headers, POWER_FACTOR_HEADER_HINTS)
 
   for (const row of rows) {
-    const shooterName = cleanShooterName(row[shooterIndex]?.trim() || '')
+    const shooterCell = parseShooterCell(row[shooterIndex]?.trim() || '')
+    const shooterName = shooterCell.shooterName
     if (!shooterName) continue
 
     const result = resultsByShooter.get(normalizeName(shooterName))
@@ -489,7 +526,9 @@ function applyDivisionRows(
     })
 
     result.division = result.division ?? divisionName
-    result.divisionPlacement = placementIndex >= 0 ? row[placementIndex]?.trim() || null : null
+    result.divisionPlacement = placementIndex >= 0
+      ? row[placementIndex]?.trim() || shooterCell.embeddedPlacement || null
+      : shooterCell.embeddedPlacement || null
     result.className = result.className ?? (classIndex >= 0 ? row[classIndex]?.trim() || undefined : undefined)
     result.powerFactor = result.powerFactor ?? (powerFactorIndex >= 0 ? row[powerFactorIndex]?.trim() || undefined : undefined)
     result.divisionStats = Object.keys(divisionStats).length > 0 ? divisionStats : result.divisionStats ?? null

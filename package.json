@@ -1,16 +1,21 @@
 {
   "name": "stage-overlay",
+  "productName": "Stage Overlay",
   "private": true,
   "version": "0.1.0",
+  "description": "PractiScore overlay builder for match and stage graphics.",
   "type": "module",
   "main": "electron/bootstrap.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types tests/results-parser.test.ts"
+    "test": "node --experimental-strip-types tests/results-parser.test.ts",
+    "package:portable": "npm run build && electron-builder --win portable",
+    "package:dir": "npm run build && electron-builder --win dir"
   },
   "dependencies": {
+    "jsdom": "^28.1.0",
     "playwright": "^1.58.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
@@ -21,11 +26,36 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "electron": "^40.6.1",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.39.1",
-    "jsdom": "^28.1.0",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
     "vite-plugin-electron": "^0.29.0",
     "vite-plugin-electron-renderer": "^0.14.6"
+  },
+  "build": {
+    "appId": "com.incy.stageoverlay",
+    "artifactName": "stage-overlay-${version}-${os}-${arch}.${ext}",
+    "asar": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "electron/bootstrap.cjs",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
   }
 }

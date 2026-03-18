@@ -1,6 +1,8 @@
 node_modules/
+.npm-cache/
 dist/
 dist-electron/
+release/
 *.tsbuildinfo
 *.log
 .DS_Store

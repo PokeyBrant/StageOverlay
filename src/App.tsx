@@ -16,6 +16,21 @@ type PreviewOption = {
   selection: OverlayViewSelection
 }
 
+type InlineOption<T extends string> = {
+  value: T
+  label: string
+}
+
+const themeOptions: InlineOption<OverlayTheme>[] = [
+  { value: 'carbon', label: 'Carbon' },
+  { value: 'sunset', label: 'Sunset' }
+]
+
+const layoutOptions: InlineOption<OverlayLayout>[] = [
+  { value: 'horizontal', label: 'Horizontal' },
+  { value: 'vertical', label: 'Vertical' }
+]
+
 function normalizeSearchValue(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
@@ -74,6 +89,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [shooterSearch, setShooterSearch] = useState('')
   const [showShooterSuggestions, setShowShooterSuggestions] = useState(false)
+  const [openSetupDropdown, setOpenSetupDropdown] = useState<'theme' | 'layout' | null>(null)
 
   useEffect(() => {
     void window.electronAPI.getUserProfile().then((value) => {
@@ -254,6 +270,72 @@ export default function App() {
     await persistProfile(preferredName, selectedTheme, selectedLayout, chosenFolder)
   }
 
+  async function handleSelectTheme(nextTheme: OverlayTheme) {
+    setSelectedTheme(nextTheme)
+    setOpenSetupDropdown(null)
+    await persistProfile(preferredName, nextTheme, selectedLayout)
+  }
+
+  async function handleSelectLayout(nextLayout: OverlayLayout) {
+    setSelectedLayout(nextLayout)
+    setOpenSetupDropdown(null)
+    await persistProfile(preferredName, selectedTheme, nextLayout)
+  }
+
+  function renderInlineDropdown<T extends string>(
+    id: 'theme' | 'layout',
+    value: T,
+    options: InlineOption<T>[],
+    onSelect: (nextValue: T) => Promise<void>
+  ) {
+    const selectedOption = options.find((option) => option.value === value) ?? options[0]
+    const isOpen = openSetupDropdown === id
+
+    return (
+      <div
+        className={`inline-dropdown ${isOpen ? 'open' : ''}`}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setOpenSetupDropdown((current) => (current === id ? null : current))
+          }
+        }}
+      >
+        <button
+          className="inline-dropdown-trigger"
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded={isOpen}
+          onClick={() => setOpenSetupDropdown((current) => (current === id ? null : id))}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setOpenSetupDropdown(null)
+            }
+          }}
+        >
+          <span>{selectedOption?.label ?? value}</span>
+          <span className="inline-dropdown-caret" aria-hidden="true">▾</span>
+        </button>
+        {isOpen && (
+          <div className="inline-dropdown-menu" role="listbox">
+            {options.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={option.value === value}
+                className={`inline-dropdown-option ${option.value === value ? 'active' : ''}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => void onSelect(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -283,32 +365,12 @@ export default function App() {
           <div className="row">
             <label className="field compact">
               <span>Theme</span>
-              <select
-                value={selectedTheme}
-                onChange={(event) => {
-                  const next = event.target.value as OverlayTheme
-                  setSelectedTheme(next)
-                  void persistProfile(preferredName, next, selectedLayout)
-                }}
-              >
-                <option value="carbon">Carbon</option>
-                <option value="sunset">Sunset</option>
-              </select>
+              {renderInlineDropdown('theme', selectedTheme, themeOptions, handleSelectTheme)}
             </label>
 
             <label className="field compact">
               <span>Layout</span>
-              <select
-                value={selectedLayout}
-                onChange={(event) => {
-                  const next = event.target.value as OverlayLayout
-                  setSelectedLayout(next)
-                  void persistProfile(preferredName, selectedTheme, next)
-                }}
-              >
-                <option value="horizontal">Horizontal</option>
-                <option value="vertical">Vertical</option>
-              </select>
+              {renderInlineDropdown('layout', selectedLayout, layoutOptions, handleSelectLayout)}
             </label>
           </div>
 

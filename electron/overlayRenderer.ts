@@ -836,11 +836,11 @@ function buildOverlayContent(match: ScrapedMatch, shooter: ScrapedShooter, selec
       divisionLabel: shooter.division || 'Unknown Division',
       showModeLabel: false,
       titleVariant: 'summary',
-      primaryLabel: 'Overall',
-      primaryValue: summary.overallPlacement || 'N/A',
-      secondaryLabel: 'Division',
-      secondaryValue: summary.divisionPlacement || 'N/A',
-      stats: buildComparisonStats(summary.stats, summary.divisionStats)
+      primaryLabel: 'Division',
+      primaryValue: summary.divisionPlacement || 'N/A',
+      secondaryLabel: 'Overall',
+      secondaryValue: summary.overallPlacement || 'N/A',
+      stats: buildMatchSummaryStats(summary.stats, summary.divisionStats)
     }
   }
 
@@ -857,7 +857,7 @@ function buildOverlayContent(match: ScrapedMatch, shooter: ScrapedShooter, selec
   return {
     modeLabel: '',
     title: match.name,
-    subtitle: `Stage ${stage.order} - ${stage.name}`,
+    subtitle: formatStageSubtitle(stage),
     shooterName: shooter.name,
     divisionLabel: shooter.division || result.division || 'Unknown Division',
     showModeLabel: false,
@@ -866,7 +866,7 @@ function buildOverlayContent(match: ScrapedMatch, shooter: ScrapedShooter, selec
     primaryValue: result.divisionPlacement || 'N/A',
     secondaryLabel: 'Overall',
     secondaryValue: result.overallPlacement || 'N/A',
-    stats: buildComparisonStats(result.stats, result.divisionStats)
+    stats: buildStageSummaryStats(result.stats, result.divisionStats)
   }
 }
 
@@ -895,6 +895,69 @@ function buildComparisonStats(overallStats: Record<string, string>, divisionStat
   return divisionFirstStats
 }
 
+function buildMatchSummaryStats(overallStats: Record<string, string>, divisionStats?: Record<string, string> | null) {
+  return reorderStats(buildComparisonStats(overallStats, divisionStats), [
+    ['%', 'psbl', '%psbl', 'percent'],
+    ['time'],
+    ['pts', 'matchpoints', 'points']
+  ])
+}
+
+function buildStageSummaryStats(overallStats: Record<string, string>, divisionStats?: Record<string, string> | null) {
+  const orderedStageStats: Record<string, string> = {
+    '%': buildStageComparisonValue(overallStats, divisionStats, ['%'], true),
+    HF: buildStageComparisonValue(overallStats, divisionStats, ['hf', 'hitfactor'], false),
+    Time: buildStageComparisonValue(overallStats, divisionStats, ['time'], true),
+    'Pts / Stg Pts': `${buildStageComparisonValue(overallStats, divisionStats, ['pts'], true)} / ${buildStageComparisonValue(overallStats, divisionStats, ['stgpts', 'stagepoints'], false)}`
+  }
+
+  const consumedKeys = new Set([
+    ...findStatKeys(overallStats, ['%', 'pts', 'stgpts', 'stagepoints', 'hf', 'hitfactor', 'time']),
+    ...findStatKeys(divisionStats ?? {}, ['%', 'pts', 'stgpts', 'stagepoints', 'hf', 'hitfactor', 'time'])
+  ].map((key) => normalizeStatKey(key)))
+
+  const stageFirstStats = divisionStats ?? overallStats
+  for (const [label, value] of Object.entries(stageFirstStats)) {
+    const normalized = normalizeStatKey(label)
+    if (consumedKeys.has(normalized) || isHiddenDisplayStat(label)) {
+      continue
+    }
+    orderedStageStats[label] = value
+  }
+
+  return orderedStageStats
+}
+
+function buildStageComparisonValue(
+  overallStats: Record<string, string>,
+  divisionStats: Record<string, string> | null | undefined,
+  aliases: string[],
+  includeComparison: boolean
+) {
+  const overallKey = findStatKey(overallStats, aliases)
+  const divisionKey = findStatKey(divisionStats ?? {}, aliases)
+  const primaryValue = divisionKey
+    ? divisionStats?.[divisionKey]
+    : overallKey
+      ? overallStats[overallKey]
+      : null
+
+  if (!primaryValue) {
+    return 'N/A'
+  }
+
+  if (!includeComparison || !divisionStats || !overallKey || !divisionKey) {
+    return primaryValue
+  }
+
+  const overallValue = overallStats[overallKey]
+  if (!overallValue || overallValue === primaryValue) {
+    return primaryValue
+  }
+
+  return `${primaryValue} (${overallValue})`
+}
+
 function findComparableStatKey(stats: Record<string, string>, targetLabel: ComparableStatLabel) {
   const matchingKeys = Object.keys(stats).filter((label) => toComparableStatLabel(label) === targetLabel)
   if (matchingKeys.length === 0) {
@@ -909,6 +972,39 @@ function findComparableStatKey(stats: Record<string, string>, targetLabel: Compa
   }
 
   return matchingKeys[0]
+}
+
+function reorderStats(stats: Record<string, string>, preferredAliasGroups: string[][]) {
+  const reordered: Record<string, string> = {}
+  const consumedKeys = new Set<string>()
+
+  for (const aliases of preferredAliasGroups) {
+    const key = findStatKey(stats, aliases)
+    if (!key || consumedKeys.has(key)) {
+      continue
+    }
+    reordered[key] = stats[key]!
+    consumedKeys.add(key)
+  }
+
+  for (const [label, value] of Object.entries(stats)) {
+    if (consumedKeys.has(label)) {
+      continue
+    }
+    reordered[label] = value
+  }
+
+  return reordered
+}
+
+function findStatKey(stats: Record<string, string>, aliases: string[]) {
+  const normalizedAliases = new Set(aliases.map((alias) => normalizeStatKey(alias)))
+  return Object.keys(stats).find((label) => normalizedAliases.has(normalizeStatKey(label))) ?? null
+}
+
+function findStatKeys(stats: Record<string, string>, aliases: string[]) {
+  const normalizedAliases = new Set(aliases.map((alias) => normalizeStatKey(alias)))
+  return Object.keys(stats).filter((label) => normalizedAliases.has(normalizeStatKey(label)))
 }
 
 function normalizeStatLabel(value: string) {
@@ -949,6 +1045,24 @@ function toComparableStatLabel(label: string): ComparableStatLabel | null {
     return 'time'
   }
   return null
+}
+
+function formatStageSubtitle(stage: ScrapedStage) {
+  const genericStageLabel = normalizeStageTitle(`Stage ${stage.order}`)
+  const stageName = stage.name.trim()
+  if (!stageName) {
+    return `Stage ${stage.order}`
+  }
+
+  if (normalizeStageTitle(stageName) === genericStageLabel || normalizeStageTitle(stageName) === String(stage.order)) {
+    return `Stage ${stage.order}`
+  }
+
+  return `Stage ${stage.order} - ${stage.name}`
+}
+
+function normalizeStageTitle(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
 function findMatchResult(match: ScrapedMatch, shooter: ScrapedShooter) {

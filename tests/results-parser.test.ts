@@ -64,4 +64,34 @@ assert.equal(activeTableResults[0]?.shooterName, 'Brandt, Jason')
 assert.equal(findShooterResult(activeTableResults, 'Jason Brandt')?.division, 'Limited Optics')
 assert.equal(findShooterResult(activeTableResults, 'Brandt, Jason')?.overallPlacement, '1')
 
+const embeddedPlacementResults = parseResultsTable(
+  ['Name', 'Division', 'Hit Factor', 'Time'],
+  [
+    ['12 - Brant, Jason', 'Limited Optics', '7.88', '10.10'],
+    ['2 - Smith, John', 'Open', '7.22', '10.81']
+  ]
+)
+assert.equal(embeddedPlacementResults[0]?.shooterName, 'Brant, Jason')
+assert.equal(embeddedPlacementResults[0]?.overallPlacement, '12')
+
+const compactEmbeddedPlacementResults = parseResultsTable(
+  ['Name', 'Division', 'Hit Factor', 'Time'],
+  [
+    ['12-Brant, Jason', 'Limited Optics', '7.88', '10.10'],
+    ['2-Smith, John', 'Open', '7.22', '10.81']
+  ]
+)
+assert.equal(compactEmbeddedPlacementResults[0]?.shooterName, 'Brant, Jason')
+assert.equal(compactEmbeddedPlacementResults[0]?.overallPlacement, '12')
+
+const unlabeledPlacementResults = parseResultsTable(
+  ['', 'Name', 'Division', 'Hit Factor', 'Time'],
+  [
+    ['12', 'Brant, Jason', 'Limited Optics', '7.88', '10.10'],
+    ['2', 'Smith, John', 'Open', '7.22', '10.81']
+  ]
+)
+assert.equal(unlabeledPlacementResults[0]?.shooterName, 'Brant, Jason')
+assert.equal(unlabeledPlacementResults[0]?.overallPlacement, '12')
+
 console.log('Parser tests passed.')
