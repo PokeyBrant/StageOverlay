@@ -2,6 +2,8 @@
 
 Portable Windows beta for scraping PractiScore results and exporting match and stage overlay PNGs for use in video workflows such as DaVinci Resolve.
 
+This app was primarily created for hit-factor style practical shooting matches such as USPSA.
+
 ## What It Does
 
 - Opens a PractiScore login window using your local browser profile.
