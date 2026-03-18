@@ -25,9 +25,12 @@ Priority improvements for the next release cycle:
 
 - improve scrape reliability and error reporting
 - continue refining overlay layout, spacing, and typography
+- add more overlay themes
+- add a transparency layer option for produced images
 - expand match and stage result validation against live PractiScore tables
 - improve preview usability and export clarity
 - tighten shooter resolution and stage/division data handling
+- begin future-facing layout planning for a user-selectable resolution setting
 
 ## Planned After That
 
@@ -37,6 +40,9 @@ Medium-term improvements:
 - packaged release polish for broader tester distribution
 - stronger troubleshooting and recovery flows for authentication and scrape failures
 - better test coverage around parsing, preview generation, and export flows
+- improve vertical layout support beyond the current horizontal-first focus
+- add zoom in/out controls in the preview window so users can inspect overlays for their own workflow needs
+- add resolution controls to the user/layout setup flow
 
 ## Future Distribution Direction
 

@@ -177,7 +177,17 @@ Check:
 - Scraped data is session-based rather than a persistent match library
 - PractiScore page/layout changes may require scraper updates
 - Overlay layout and typography are still being refined
+- Horizontal layout is the current primary focus; vertical layout is planned for further improvement in a future version
 
 ## Future Improvements
 
 Planned future work lives in [ROADMAP.md](./ROADMAP.md).
+
+Near-term and future goals include:
+
+- additional overlay themes
+- a transparency layer option for produced images
+- continued work on vertical layout quality
+- preview zoom controls for better per-user inspection
+- future resolution controls as part of user/layout setup
+- a later move toward a bundled browser and installer-based distribution
