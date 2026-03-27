@@ -5,7 +5,11 @@ const { pathToFileURL } = require('node:url')
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
 
 process.env.APP_ROOT = path.join(__dirname, '..')
-app.disableHardwareAcceleration()
+// Keep the Windows stability workaround, but only apply it before Electron
+// is ready so packaged launches do not throw if the bootstrap loads late.
+if (!app.isReady()) {
+  app.disableHardwareAcceleration()
+}
 
 const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
@@ -339,7 +343,7 @@ async function exportOverlays(sessionId, shooterId, options) {
 
   for (const selection of selections) {
     const buffer = await renderPngBuffer(buildOverlayContent(sessionMatch.match, shooter, selection), options.layout, options.theme)
-    const filePath = path.join(baseDir, `${toSelectionFileName(selection)}.png`)
+    const filePath = path.join(baseDir, `${toSelectionFileName(sessionMatch.match, selection)}.png`)
     await fs.promises.writeFile(filePath, buffer)
     files.push(filePath)
   }
@@ -1075,9 +1079,12 @@ function toSelectionId(selection) {
   return selection.kind
 }
 
-function toSelectionFileName(selection) {
+function toSelectionFileName(match, selection) {
   if (selection.kind.startsWith('stage-') && selection.stageId) {
-    return `${selection.kind}-${selection.stageId}`
+    const stage = match.stages.find((candidate) => candidate.id === selection.stageId)
+    if (stage) {
+      return `Stage ${stage.order}`
+    }
   }
   return selection.kind
 }

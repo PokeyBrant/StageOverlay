@@ -12,8 +12,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 process.env.APP_ROOT = path.join(__dirname, '..')
 
 // Some Windows environments crash in Chromium startup paths before the
-// first window appears, so we start without GPU acceleration.
-app.disableHardwareAcceleration()
+// first window appears, so we keep this workaround, but only while Electron
+// is still unready. Packaged builds can load late enough that an unconditional
+// call would throw.
+if (!app.isReady()) {
+  app.disableHardwareAcceleration()
+}
 
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')

@@ -107,6 +107,8 @@ The app also shows the detected division for the selected shooter.
 
 The app writes PNGs directly into the selected export folder.
 
+Stage exports are named with readable stage numbers, such as `Stage 1.png`, `Stage 2.png`, and so on.
+
 ## Typical Workflow
 
 1. Open login
@@ -132,6 +134,8 @@ Output is written to:
 ```text
 release/
 ```
+
+The packaged Windows executable is rebuilt from this output for each release.
 
 There is also a directory packaging target for inspection:
 
