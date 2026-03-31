@@ -211,19 +211,18 @@ function clearSessions() {
 }
 
 function loadBuiltModule(prefix) {
-  const fileName = fs.readdirSync(MAIN_DIST)
+  const matches = fs.readdirSync(MAIN_DIST)
     .filter((entry) => entry.startsWith(`${prefix}-`) && entry.endsWith('.js'))
-    .map((entry) => ({
-      entry,
-      modifiedAt: fs.statSync(path.join(MAIN_DIST, entry)).mtimeMs
-    }))
-    .sort((left, right) => right.modifiedAt - left.modifiedAt)[0]?.entry
 
-  if (!fileName) {
+  if (matches.length === 0) {
     throw new Error(`Built module not found for prefix: ${prefix}`)
   }
 
-  return import(pathToFileURL(path.join(MAIN_DIST, fileName)).href)
+  if (matches.length > 1) {
+    throw new Error(`Expected exactly one built module for prefix "${prefix}", found: ${matches.join(', ')}`)
+  }
+
+  return import(pathToFileURL(path.join(MAIN_DIST, matches[0])).href)
 }
 
 function slugify(value) {

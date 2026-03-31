@@ -4,13 +4,10 @@ import fs from 'node:fs'
 import { app } from 'electron'
 import { chromium } from 'playwright'
 import { cleanMatchTitle, findShooterResult, parseDashboardMatches, parseResultsHtml, parseResultsTable } from './parsers'
+import { pickResultsControlIndexes } from './resultsControls'
 import type { Locator, Page } from 'playwright'
 import type { MatchReference, ScrapedMatch, ScrapedStageResult } from './types'
-
-type DropdownOption = {
-  value: string
-  label: string
-}
+import type { DropdownOption } from './resultsControls'
 
 type VisibleTableSnapshot = {
   matchName: string
@@ -109,7 +106,8 @@ export async function scrapeMatchDetails(matchRef: MatchReference | { url: strin
     await page.waitForTimeout(4000)
     const preferredShooterName = await getPreferredShooterName()
     const dropdownDrivenMatch = await scrapeDropdownDrivenMatch(page, resultsUrl, preferredShooterName)
-    const parsed = dropdownDrivenMatch ?? parseResultsHtml(await page.content(), resultsUrl)
+    const parsedHtml = parseResultsHtml(await page.content(), resultsUrl)
+    const parsed = dropdownDrivenMatch && dropdownDrivenMatch.stages.length > 0 ? dropdownDrivenMatch : parsedHtml
     const canonicalMatchName = 'name' in matchRef && matchRef.name ? cleanMatchTitle(matchRef.name) : cleanMatchTitle(parsed.name)
     return {
       ...parsed,
@@ -130,6 +128,10 @@ async function scrapeDropdownDrivenMatch(page: Page, resultsUrl: string, preferr
 
   const { scopeSelect, divisionSelect, scopeOptions } = controls
   if (scopeOptions.length === 0) {
+    return null
+  }
+
+  if (scopeOptions.length < 2) {
     return null
   }
 
@@ -243,15 +245,29 @@ async function getResultsControls(page: Page) {
     return null
   }
 
-  const visibleSelects = page.locator('select:visible')
-  const visibleCount = await visibleSelects.count()
-  if (visibleCount < 2) {
+  const selects = page.locator('select')
+  const selectCount = await selects.count()
+  if (selectCount < 2) {
     return null
   }
 
-  const scopeSelect = visibleSelects.nth(0)
-  const divisionSelect = visibleSelects.nth(1)
-  const scopeOptions = await listDropdownOptions(scopeSelect)
+  const candidates: Array<{ locator: Locator; options: DropdownOption[] }> = []
+  for (let index = 0; index < selectCount; index += 1) {
+    const locator = selects.nth(index)
+    const options = await listDropdownOptions(locator)
+    if (options.length > 0) {
+      candidates.push({ locator, options })
+    }
+  }
+
+  const controlIndexes = pickResultsControlIndexes(candidates)
+  if (!controlIndexes) {
+    return null
+  }
+
+  const scopeSelect = candidates[controlIndexes.scopeIndex]!.locator
+  const divisionSelect = candidates[controlIndexes.divisionIndex]!.locator
+  const scopeOptions = candidates[controlIndexes.scopeIndex]!.options
   return {
     scopeSelect,
     divisionSelect,
@@ -278,12 +294,25 @@ async function findOverallDivisionOption(select: Locator) {
 }
 
 async function selectDropdownOption(select: Locator, option: DropdownOption) {
-  if (option.value) {
-    await select.selectOption({ value: option.value })
-    return
-  }
+  await select.evaluate((node, requestedOption) => {
+    const selectElement = node as HTMLSelectElement
+    const normalizedLabel = (value: string) => value.replace(/\s+/g, ' ').trim()
+    const matchingOption = Array.from(selectElement.options).find((candidate) => {
+      if (requestedOption.value && candidate.value === requestedOption.value) {
+        return true
+      }
+      return normalizedLabel(candidate.textContent || '') === requestedOption.label
+    })
 
-  await select.selectOption({ label: option.label })
+    if (!matchingOption) {
+      throw new Error(`Dropdown option not found: ${requestedOption.label}`)
+    }
+
+    selectElement.value = matchingOption.value
+    matchingOption.selected = true
+    selectElement.dispatchEvent(new Event('input', { bubbles: true }))
+    selectElement.dispatchEvent(new Event('change', { bubbles: true }))
+  }, option)
 }
 
 async function waitForResultsTable(page: Page) {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { findShooterResult, matchesNameParts, parseDashboardMatches, parseResultsHtml, parseResultsTable, resolveShooter } from '../electron/parsers.ts'
+import { pickResultsControlIndexes } from '../electron/resultsControls.ts'
 
 const fixturesDir = path.join(process.cwd(), 'tests', 'fixtures')
 
@@ -93,5 +94,46 @@ const unlabeledPlacementResults = parseResultsTable(
 )
 assert.equal(unlabeledPlacementResults[0]?.shooterName, 'Brant, Jason')
 assert.equal(unlabeledPlacementResults[0]?.overallPlacement, '12')
+
+const controlIndexes = pickResultsControlIndexes([
+  {
+    options: [
+      { value: '10', label: '10' },
+      { value: '25', label: '25' },
+      { value: '50', label: '50' }
+    ]
+  },
+  {
+    options: [
+      { value: 'overall', label: 'Overall' },
+      { value: 'stage-1', label: 'Stage 1 - The Long Walk' },
+      { value: 'stage-2', label: 'Stage 2 - Tight Corners' }
+    ]
+  },
+  {
+    options: [
+      { value: 'overall', label: 'Overall' },
+      { value: 'co', label: 'Carry Optics' },
+      { value: 'lo', label: 'Limited Optics' }
+    ]
+  }
+])
+assert.deepEqual(controlIndexes, { scopeIndex: 1, divisionIndex: 2 })
+
+const missingScopeIndexes = pickResultsControlIndexes([
+  {
+    options: [
+      { value: 'overall', label: 'Overall' },
+      { value: 'lo', label: 'Limited Optics' }
+    ]
+  },
+  {
+    options: [
+      { value: '10', label: '10' },
+      { value: '25', label: '25' }
+    ]
+  }
+])
+assert.equal(missingScopeIndexes, null)
 
 console.log('Parser tests passed.')
