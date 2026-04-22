@@ -1,0 +1,64 @@
+{
+  "name": "stage-overlay",
+  "productName": "Stage Overlay",
+  "private": true,
+  "version": "0.1.2",
+  "description": "Match overlay builder for match and stage graphics.",
+  "type": "module",
+  "main": "electron/bootstrap.cjs",
+  "scripts": {
+    "clean:build": "node scripts/clean-build.mjs dist dist-electron",
+    "clean:package": "node scripts/clean-build.mjs release/win-unpacked",
+    "verify:dist": "node scripts/verify-release.mjs --dist-dir dist-electron",
+    "verify:package": "node scripts/verify-release.mjs --dist-dir dist-electron --package-dir release/win-unpacked --require-asar",
+    "dev": "vite",
+    "build": "npm run clean:build && tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build && npm run verify:dist",
+    "preview": "vite preview",
+    "test": "node --experimental-strip-types tests/run-tests.ts",
+    "package:portable": "npm run clean:package && npm run build && electron-builder --win portable && npm run verify:package",
+    "package:dir": "npm run clean:package && npm run build && electron-builder --win dir && npm run verify:package"
+  },
+  "dependencies": {
+    "jsdom": "^28.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "electron": "^40.6.1",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "vite-plugin-electron": "^0.29.0",
+    "vite-plugin-electron-renderer": "^0.14.6"
+  },
+  "build": {
+    "appId": "com.incy.stageoverlay",
+    "artifactName": "stage-overlay-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "electron/bootstrap.cjs",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  }
+}
